@@ -1,4 +1,4 @@
-# Dashboard Pengajuan PO — Naintiland
+# Dashboard Pengajuan PO — Naintiland.
 
 Aplikasi web pengajuan Purchase Order dengan persetujuan bertingkat. Tiap orang masuk dengan akunnya sendiri (email + kata sandi), menyetujui PO sesuai jabatannya, dan hasilnya langsung terlihat oleh Purchasing. PO yang sudah disetujui bisa diunduh sebagai PDF di atas kop surat perusahaan.
 
