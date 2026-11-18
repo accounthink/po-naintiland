@@ -1,6 +1,6 @@
-# Dashboard Pengajuan PO — Naintiland.
+# Dashboard Pengajuan PO — Naintiland
 
-Aplikasi web pengajuan Purchase Order dengan persetujuan bertingkat. Tiap orang masuk dengan akunnya sendiri (email + kata sandi), menyetujui PO sesuai jabatannya, dan hasilnya langsung terlihat oleh Purchasing. PO yang sudah disetujui bisa diunduh sebagai PDF di atas kop surat perusahaan.
+Aplikasi web pengajuan Purchase Order dengan persetujuan bertingkat. Tiap orang masuk dengan akunnya sendiri (email + kata sandi), menyetujui PO sesuai jabatannya, dan hasilnya langsung terlihat oleh Project & Material Control. PO yang sudah disetujui bisa diunduh sebagai PDF di atas kop surat perusahaan.
 
 Halaman disajikan lewat GitHub Pages. Login dan data bersama memakai Firebase (paket gratis "Spark" cukup untuk tim kecil).
 
@@ -50,13 +50,13 @@ Bagikan alamatnya. Tiap orang mendaftar sendiri, lalu admin menetapkan jabatanny
 
 ## Cara kerja
 
-- **Purchasing** mengisi form pengajuan, bisa menyimpan draft, mengedit, dan menghapus selama PO belum disetujui penuh.
+- **Project & Material Control** mengisi form pengajuan, bisa menyimpan draft, mengedit, dan menghapus selama PO belum disetujui penuh.
 - **Aturan nominal** (menu Pengaturan) menentukan, untuk tiap rentang total PO, jabatan mana yang **Menyetujui**, mana yang hanya **Mengetahui**, dan mana yang tidak terlibat.
   - Jabatan Menyetujui menekan **Setujui** secara berurutan sesuai urutan jabatan. Setelah yang terakhir menyetujui, PO berstatus Disetujui dan tombol **Unduh PO** muncul.
   - Jabatan Mengetahui wajib menekan **Mengetahui** (boleh sebelum atau sesudah penyetuju); sampai itu dilakukan, PO berstatus "Menunggu diketahui …" dan belum bisa diunduh. Kolom Mengetahui dilewati bila orangnya sama dengan penyetuju.
   - Bawaan: sampai Rp 5.000.000 disetujui Accounting; di atas itu sampai Rp 15.000.000 SPV Proyek; sampai Rp 25.000.000 Branch Manager; sampai Rp 99.000.000 General Manager; di atasnya Direktur. Tiap PO cukup disetujui satu jabatan yang berwenang. Ubah sesuai kebutuhan.
-- **Rekap Pembelian**: daftar barang dari PO yang sudah disetujui pada bulan yang dipilih, dipisah antara Material dan Inventaris (dipilih Purchasing di form lewat "Jenis pembelian"), lengkap dengan total dan unduhan Excel (.xlsx) yang sudah terformat.
-- **Rekening supplier**: bank, nomor rekening, dan atas nama diisi Purchasing di form, tercetak otomatis di PDF PO, dan terisi sendiri saat supplier yang sama dipakai lagi.
+- **Rekap Pembelian**: daftar barang dari PO yang sudah disetujui pada bulan yang dipilih, dipisah antara Material dan Inventaris (dipilih Project & Material Control di form lewat "Jenis pembelian"), lengkap dengan total dan unduhan Excel (.xlsx) yang sudah terformat.
+- **Rekening supplier**: bank, nomor rekening, dan atas nama diisi Project & Material Control di form, tercetak otomatis di PDF PO, dan terisi sendiri saat supplier yang sama dipakai lagi.
 - **Vendor**: kolom opsional di form, terpisah dari Supplier, tercetak di PDF PO; nama yang pernah dipakai muncul sebagai saran.
 - **Ongkos kirim**: diisi di form di bawah PPN, ikut masuk ke TOTAL (dan karenanya ke rentang wewenang), tercetak di PDF dan rekap.
 - **Profil** (klik nama di kanan atas): nama dan tanda tangan yang tercetak di PO.
@@ -67,4 +67,4 @@ Bagikan alamatnya. Tiap orang mendaftar sendiri, lalu admin menetapkan jabatanny
 - Siapa pun yang tahu alamatnya bisa mendaftar akun, tetapi tanpa jabatan dari admin ia hanya bisa melihat daftar PO. Bila daftar PO pun tidak boleh terlihat orang luar, matikan pendaftaran mandiri di Firebase (Authentication → Settings → User actions) setelah semua anggota tim terdaftar.
 - Admin hanya satu (awalnya pendaftar pertama). Admin bisa memindahkannya ke pengguna lain lewat tombol **Jadikan admin** di Pengaturan → Jabatan pengguna. Admin tetap bisa memegang jabatan, misalnya Accounting.
 - Tidak ada notifikasi email; penyetuju melihat PO yang menunggu saat membuka halaman (angka merah di menu Persetujuan).
-- Nomor PO dibuat dari nomor terakhir di bulan yang sama. Bila dua Purchasing mengajukan pada detik yang sama, nomornya bisa kembar.
+- Nomor PO dibuat dari nomor terakhir di bulan yang sama. Bila dua Project & Material Control mengajukan pada detik yang sama, nomornya bisa kembar.

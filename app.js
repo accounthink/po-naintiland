@@ -78,7 +78,9 @@ function flowFor(po){
 const me = () => S.users[S.me.id] || {};
 const myRole = () => me().role || '';
 const isAdmin = () => !!S.me.id && S.cfg.adminUid === S.me.id;
-const roleName = r => r === 'purchasing' ? 'Purchasing' : ((jab().find(l => l.id === r) || {}).title || 'Belum ada jabatan');
+// Nama tampilan jabatan pengaju PO (ID internalnya tetap 'purchasing').
+const PURCH = 'Project & Material Control';
+const roleName = r => r === 'purchasing' ? PURCH : ((jab().find(l => l.id === r) || {}).title || 'Belum ada jabatan');
 const isPurch = () => myRole() === 'purchasing';
 const canRekap = () => isAdmin() || isPurch();
 const poFlow = po => (po.status !== 'draft' && Array.isArray(po.flow) && po.flow.length) ? po.flow : flowFor(po).flow;
@@ -134,7 +136,7 @@ const updUser = (uid,patch) => write(() => fs.collection('users').doc(uid).updat
 const updCfg = patch => write(() => fs.collection('config').doc('app').update(patch), () => Object.assign(S.cfg, patch));
 
 /* ---------- mulai ---------- */
-const VERSION = '18.11-f';
+const VERSION = '18.11-f.n1';
 function init(){
   const bs = document.querySelector('.brand small'); if(bs) bs.textContent = 'Purchase Order · v' + VERSION;
   route();
@@ -237,7 +239,7 @@ function render(){
   const v = $('#view');
   if(!S.loaded){ v.innerHTML = '<div class="card empty">Memuat data…</div>'; return; }
   if(S.view === 'pengaturan' && isAdmin() && W && v.querySelector('#setBox')) { renderUsers(); return; } // jangan timpa isian yang belum disimpan
-  if(S.view === 'rekap' && !canRekap()){ v.innerHTML = '<div class="card empty">Rekap Pembelian hanya dapat dilihat oleh Admin dan Purchasing.</div>'; return; }
+  if(S.view === 'rekap' && !canRekap()){ v.innerHTML = '<div class="card empty">Rekap Pembelian hanya dapat dilihat oleh Admin dan '+esc(PURCH)+'.</div>'; return; }
   v.innerHTML = ({dashboard:vDash, pengajuan:vList, persetujuan:vAppr, rekap:vRekap, pengaturan:vSet})[S.view]();
 }
 function rowActs(po){
@@ -422,7 +424,7 @@ async function rekapXLSX(){
 async function doCSV(btn){ btn.disabled = true; try { const r = await rekapXLSX(); await saveFile(r.name, r.blob); } catch(e){ console.error(e); toast(e && e.code === 'declined' ? 'Unduhan dibatalkan.' : e && e.code ? 'Unduhan tidak tersedia di tampilan ini.' : 'Gagal membuat file Excel. Periksa koneksi internet lalu coba lagi.'); } btn.disabled = false; }
 /* ----- pengaturan (admin) ----- */
 function roleSelect(uid, cur){
-  return '<select data-role="'+esc(uid)+'"><option value="">Belum ditetapkan</option><option value="purchasing"'+(cur==='purchasing'?' selected':'')+'>Purchasing</option>'+
+  return '<select data-role="'+esc(uid)+'"><option value="">Belum ditetapkan</option><option value="purchasing"'+(cur==='purchasing'?' selected':'')+'>'+esc(PURCH)+'</option>'+
     jab().map(l => '<option value="'+esc(l.id)+'"'+(cur===l.id?' selected':'')+'>'+esc(l.title)+'</option>').join('')+'</select>';
 }
 function usersHTML(){
@@ -490,7 +492,7 @@ function openForm(po){
   if(!po) F.no = nextNo(F.tanggal);
   F.items = F.items.map(i => ({...i, diskon: num(i.diskon) ? i.diskon : ''}));
   const had = po && (po.approvals||[]).length;
-  modal('<h2>'+(po?'Edit':'Form')+' Pengajuan PO</h2><div class="sub">Diisi oleh Purchasing. Simpan sebagai draft atau langsung ajukan untuk persetujuan.</div>'+
+  modal('<h2>'+(po?'Edit':'Form')+' Pengajuan PO</h2><div class="sub">Diisi oleh '+esc(PURCH)+'. Simpan sebagai draft atau langsung ajukan untuk persetujuan.</div>'+
     (had ? '<div class="note warn">PO ini sudah punya persetujuan. Menyimpan perubahan akan mengulang proses persetujuan dari awal.</div>' : '')+
     '<div class="fg"><div><label>No. PO</label><input type="text" id="fNo" maxlength="30" value="'+esc(F.no)+'" title="Terisi otomatis, boleh diubah"></div><div><label>Tanggal</label><input type="date" id="fTgl" value="'+esc(F.tanggal)+'"></div><div><label>Prioritas</label><select id="fPri">'+['Normal','Urgent','Sangat Urgent'].map(p => '<option'+(F.prioritas===p?' selected':'')+'>'+p+'</option>').join('')+'</select></div>'+
     '<div><label>Project</label><input type="text" id="fPro" value="'+esc(F.project)+'" placeholder="Nama project / klien"></div><div><label>Supplier</label><input type="text" id="fSup" value="'+esc(F.supplier)+'" placeholder="Nama supplier"></div><div><label>Vendor <span style="font-weight:400">(opsional)</span></label><input type="text" id="fVen" maxlength="60" list="venList" value="'+esc(F.vendor)+'" placeholder="Nama vendor"><datalist id="venList">'+[...new Set(S.pos.map(p=>String(p.vendor||'').trim()).filter(Boolean))].sort().map(v=>'<option value="'+esc(v)+'">').join('')+'</datalist></div><div><label>Jenis pembelian</label><select id="fJen"><option'+(F.jenis!=='Inventaris'?' selected':'')+'>Material</option><option'+(F.jenis==='Inventaris'?' selected':'')+'>Inventaris</option></select></div><div><label>Bank supplier</label><input type="text" id="fBank" maxlength="30" value="'+esc(F.bank)+'" placeholder="mis. BCA"></div><div><label>No. rekening supplier</label><input type="text" id="fRek" maxlength="40" inputmode="numeric" value="'+esc(F.rek)+'" placeholder="Tercetak di PO"></div><div><label>Atas nama</label><input type="text" id="fAn" maxlength="60" value="'+esc(F.an)+'" placeholder="Nama pemilik rekening"></div></div>'+
@@ -533,7 +535,7 @@ async function saveForm(status, btn){
 function openView(po){
   po = withLiveSigs(po);
   const c = calc(po), fl = poFlow(po), kn = shownKnowers(po), ap = po.approvals||[], ks = po.knows||[];
-  const steps = '<div class="step '+(po.status==='draft'?'now':'done')+'"><small>Diajukan oleh</small><b>Purchasing</b><span>'+esc(po.createdName||'-')+(po.status==='draft'?' · masih draft':'')+'</span>'+(okSig(po.createdSig)&&po.status!=='draft'?'<img src="'+po.createdSig+'" alt="">':'')+'</div>'+
+  const steps = '<div class="step '+(po.status==='draft'?'now':'done')+'"><small>Diajukan oleh</small><b>'+esc(PURCH)+'</b><span>'+esc(po.createdName||'-')+(po.status==='draft'?' · masih draft':'')+'</span>'+(okSig(po.createdSig)&&po.status!=='draft'?'<img src="'+po.createdSig+'" alt="">':'')+'</div>'+
     fl.map((l,i) => { const a = ap.find(x => x.levelId === l.id), rj = po.rejected && po.rejected.levelId === l.id, now = po.status==='diajukan' && (po.step||0) === i;
       return '<div class="step '+(a?'done':rj?'rej':now?'now':'')+'"><small>'+(fl.length===1?'Disetujui oleh':'Approval '+(i+1))+'</small><b>'+esc(l.title)+'</b><span>'+(a?'Disetujui '+esc(a.name)+' · '+tglShort(a.at):rj?'Ditolak '+esc(po.rejected.name)+' · '+tglShort(po.rejected.at):now?'Menunggu persetujuan':'Belum')+'</span>'+(a&&okSig(a.sig)?'<img src="'+a.sig+'" alt="">':'')+'</div>'; }).join('')+
     kn.map(l => { const k = ks.find(x => x.levelId === l.id);
@@ -615,7 +617,7 @@ function doKnow(po){
 }
 function doReject(po){
   const l = curLevel(po);
-  modal('<h2>Tolak '+esc(po.no)+'?</h2><div class="sub">Purchasing dapat memperbaiki lalu mengajukan ulang.</div><label>Alasan penolakan</label><textarea id="rj" rows="3"></textarea><div class="mfoot"><button class="btn" data-act="close">Batal</button><button class="btn d solid" id="rjb">Tolak PO</button></div>', true);
+  modal('<h2>Tolak '+esc(po.no)+'?</h2><div class="sub">'+esc(PURCH)+' dapat memperbaiki lalu mengajukan ulang.</div><label>Alasan penolakan</label><textarea id="rj" rows="3"></textarea><div class="mfoot"><button class="btn" data-act="close">Batal</button><button class="btn d solid" id="rjb">Tolak PO</button></div>', true);
   $('#rjb').onclick = async () => { const reason = $('#rj').value.trim(); if(!reason) return toast('Tulis alasan penolakan.'); $('#rjb').disabled = true;
     if(await updPO(po.id, {status:'ditolak', rejected:{levelId:l.id, by:S.me.id, name:me().name||l.title, reason, at:Date.now()}, updatedAt:Date.now()})){ closeModal(); toast(po.no+' ditolak.'); } else if($('#rjb')) $('#rjb').disabled = false; };
 }
@@ -684,7 +686,7 @@ function buildPDF(po){
   cap('Catatan',L,ty0+3.5);font('italic',8,MUTE);doc.text(doc.splitTextToSize(po.catatan||'-',bx-L-10).slice(0,4),L,ty0+8.5);
   /* tanda tangan */
   y+=13;cap('Persetujuan',L,y);hair(L+24,y-1,R);y+=7;
-  const cols=[{t:'Diajukan oleh',r:'Purchasing',n:po.createdName,s:po.createdSig}]
+  const cols=[{t:'Diajukan oleh',r:PURCH,n:po.createdName,s:po.createdSig}]
     .concat(fl.map((l,i)=>{const a=(po.approvals||[]).find(x=>x.levelId===l.id)||{};return{t:fl.length===1?'Disetujui oleh':'Approval '+(i+1),r:l.title,n:a.name,s:a.sig,at:a.at,w:'Disetujui'}}))
     .concat(kn.map(l=>{const k=ks.find(x=>x.levelId===l.id)||{};return{t:'Mengetahui',r:l.title,n:k.name,s:k.sig,at:k.at,w:'Diketahui'}}));
   const cw=(R-L)/cols.length,sm=cols.length>4;
