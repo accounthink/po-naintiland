@@ -1,0 +1,80 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() { return request.auth != null; }
+    function cfgPath() { return /databases/$(database)/documents/config/app; }
+    function isAdmin() {
+      return signedIn() && exists(cfgPath()) && get(cfgPath()).data.adminUid == request.auth.uid;
+    }
+    function role() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role;
+    }
+    function changedOnly(keys) {
+      return request.resource.data.diff(resource.data).affectedKeys().hasOnly(keys);
+    }
+
+    // Pengaturan aplikasi. Pengguna pertama yang masuk membuat dokumen ini dan menjadi admin.
+    match /config/app {
+      allow read: if signedIn();
+      allow create: if signedIn() && request.resource.data.adminUid == request.auth.uid;
+      // Admin boleh mengubah pengaturan, termasuk memindahkan admin ke pengguna lain.
+      allow update: if isAdmin() && request.resource.data.adminUid is string;
+    }
+
+    // Profil pengguna. Jabatan (role) hanya bisa diubah admin.
+    match /users/{uid} {
+      allow read: if signedIn();
+      allow create: if signedIn() && request.auth.uid == uid && request.resource.data.role == '';
+      allow update: if isAdmin()
+        || (signedIn() && request.auth.uid == uid && request.resource.data.role == resource.data.role);
+      allow delete: if isAdmin();
+    }
+
+    // Pengajuan PO.
+    match /pos/{id} {
+      allow read: if signedIn();
+
+      // Purchasing membuat draft atau pengajuan baru.
+      allow create: if signedIn() && role() == 'purchasing'
+        && request.resource.data.createdBy == request.auth.uid
+        && request.resource.data.status in ['draft', 'diajukan']
+        && request.resource.data.approvals.size() == 0
+        && request.resource.data.knows.size() == 0;
+
+      allow update: if signedIn() && (
+        // Purchasing mengedit / mengajukan ulang selama belum disetujui penuh.
+        ( role() == 'purchasing'
+          && resource.data.status != 'disetujui'
+          && request.resource.data.status in ['draft', 'diajukan']
+          && request.resource.data.approvals.size() == 0
+          && request.resource.data.knows.size() == 0 )
+        // Jabatan yang sedang mendapat giliran menyetujui atau menolak.
+        || ( resource.data.status == 'diajukan'
+          && resource.data.flow[resource.data.step].id == role()
+          && changedOnly(['approvals', 'step', 'status', 'rejected', 'updatedAt'])
+          && (
+            // Menolak: tahap dan daftar persetujuan tidak berubah, penolak tercatat atas namanya sendiri.
+            ( request.resource.data.status == 'ditolak'
+              && request.resource.data.step == resource.data.step
+              && request.resource.data.approvals.size() == resource.data.approvals.size()
+              && request.resource.data.rejected.by == request.auth.uid )
+            // Menyetujui: tepat satu tahap maju, satu tanda persetujuan baru atas namanya sendiri,
+            // dan status "disetujui" hanya bila itu tahap terakhir.
+            || ( request.resource.data.step == resource.data.step + 1
+              && request.resource.data.approvals.size() == resource.data.approvals.size() + 1
+              && request.resource.data.approvals[resource.data.approvals.size()].by == request.auth.uid
+              && request.resource.data.approvals[resource.data.approvals.size()].levelId == role()
+              && request.resource.data.status == (request.resource.data.step >= resource.data.flow.size() ? 'disetujui' : 'diajukan') )
+          ) )
+        // Jabatan yang hanya mengetahui.
+        || ( resource.data.status in ['diajukan', 'disetujui']
+          && role() in resource.data.knowIds
+          && changedOnly(['knows', 'updatedAt']) )
+      );
+
+      allow delete: if isAdmin()
+        || (signedIn() && role() == 'purchasing' && resource.data.status != 'disetujui');
+    }
+  }
+}
