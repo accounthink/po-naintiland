@@ -78,6 +78,10 @@ function flowFor(po){
 const me = () => S.users[S.me.id] || {};
 const myRole = () => me().role || '';
 const isAdmin = () => !!S.me.id && S.cfg.adminUid === S.me.id;
+// Jenis transaksi. Inventaris memakai aturan persetujuan Inventaris; jenis lain memakai aturan umum.
+const JENIS = ['Material','Inventaris','Upah Tukang Borongan','Upah Buruh Harian','Biaya Fasum','Biaya Marketing'];
+const JCOLOR = {'Material':['rgba(15,138,140,.10)','#0a6c72'],'Inventaris':['rgba(232,162,58,.16)','#8a5a0b'],'Upah Tukang Borongan':['rgba(123,116,214,.14)','#4b44a8'],'Upah Buruh Harian':['rgba(240,107,181,.14)','#a3326f'],'Biaya Fasum':['rgba(63,163,77,.14)','#2e7a3a'],'Biaya Marketing':['rgba(43,98,217,.12)','#2b52a8']};
+const jenisOf = p => JENIS.includes(p && p.jenis) ? p.jenis : 'Material';
 // Nama tampilan jabatan pengaju PO (ID internalnya tetap 'purchasing').
 const PURCH = 'Project & Material Control';
 const roleName = r => r === 'purchasing' ? PURCH : ((jab().find(l => l.id === r) || {}).title || 'Belum ada jabatan');
@@ -136,7 +140,7 @@ const updUser = (uid,patch) => write(() => fs.collection('users').doc(uid).updat
 const updCfg = patch => write(() => fs.collection('config').doc('app').update(patch), () => Object.assign(S.cfg, patch));
 
 /* ---------- mulai ---------- */
-const VERSION = '18.11-f.n1';
+const VERSION = '20.11-n2';
 function init(){
   const bs = document.querySelector('.brand small'); if(bs) bs.textContent = 'Purchase Order · v' + VERSION;
   route();
@@ -297,81 +301,83 @@ const clientKey=p=>String(p.project||'').trim().replace(/\s+/g,' ').toLowerCase(
 function rekap(){
   const m=S.rm||today().slice(0,7),month=S.pos.filter(p=>done(p)&&String(p.tanggal||'').slice(0,7)===m)
     .sort((a,b)=>String(a.tanggal).localeCompare(String(b.tanggal))||String(a.no).localeCompare(String(b.no)));
-  // Satu kelompok per klien, berisi semua barang yang dibeli untuk klien itu di bulan ini.
-  const cmap={};
-  const J=()=>({rows:[],po:0,ppn:0,ong:0,total:0});
-  month.forEach(p=>{const k=clientKey(p),c=calc(p),inv=p.jenis==='Inventaris',jn=inv?'Inventaris':'Material';
-    const x=cmap[k]||(cmap[k]={key:k,name:String(p.project||'').trim().replace(/\s+/g,' ')||'(tanpa nama)',po:0,rows:[],sub:0,ppn:0,ong:0,mat:0,inv:0,j:{Material:J(),Inventaris:J()}});
-    x.po++;c.items.forEach(i=>{x.rows.push({p,i,jenis:jn});x.j[jn].rows.push({p,i,jenis:jn})});
-    x.j[jn].po++;x.j[jn].ppn+=c.ppn;x.j[jn].ong+=c.ongkir;x.j[jn].total+=c.total;
-    x.sub+=c.subtotal;x.ppn+=c.ppn;x.ong+=c.ongkir;x[inv?'inv':'mat']+=c.total});
-  const clients=Object.values(cmap).map(c=>Object.assign(c,{item:c.rows.length,total:c.mat+c.inv})).sort((a,b)=>b.total-a.total||a.name.localeCompare(b.name));
+  // Satu kelompok per klien; di dalamnya dipisah per jenis transaksi.
+  const cmap={},J=()=>({rows:[],po:0,ppn:0,ong:0,total:0});
+  month.forEach(p=>{const k=clientKey(p),c=calc(p),jn=jenisOf(p);
+    const x=cmap[k]||(cmap[k]={key:k,name:String(p.project||'').trim().replace(/\s+/g,' ')||'(tanpa nama)',po:0,rows:[],sub:0,ppn:0,ong:0,by:{},j:{}});
+    const q=x.j[jn]||(x.j[jn]=J());
+    x.po++;c.items.forEach(i=>{x.rows.push({p,i,jenis:jn});q.rows.push({p,i,jenis:jn})});
+    q.po++;q.ppn+=c.ppn;q.ong+=c.ongkir;q.total+=c.total;
+    x.sub+=c.subtotal;x.ppn+=c.ppn;x.ong+=c.ongkir;x.by[jn]=(x.by[jn]||0)+c.total});
+  const clients=Object.values(cmap).map(c=>Object.assign(c,{item:c.rows.length,total:Object.values(c.by).reduce((a,v)=>a+v,0)})).sort((a,b)=>b.total-a.total||a.name.localeCompare(b.name));
   const ck=clients.some(c=>c.key===S.rk)?S.rk:'',cname=ck?cmap[ck].name:'',shown=ck?[cmap[ck]]:clients;
-  const T={mat:0,inv:0,ong:0};shown.forEach(c=>{T.mat+=c.mat;T.inv+=c.inv;T.ong+=c.ong});
+  const T={by:{},ong:0,total:0};shown.forEach(c=>{JENIS.forEach(j=>{if(c.by[j])T.by[j]=(T.by[j]||0)+c.by[j]});T.ong+=c.ong;T.total+=c.total});
   // Daftar PO yang memakai ongkos kirim bulan ini, diurutkan per klien.
   const ongList=month.filter(p=>(!ck||clientKey(p)===ck)&&calc(p).ongkir>0).sort((a,b)=>cmap[clientKey(a)].name.localeCompare(cmap[clientKey(b)].name)||String(a.tanggal).localeCompare(String(b.tanggal)));
-  // Total per bulan sepanjang tahun yang dipilih (ikut filter klien), dipisah Material dan Inventaris.
-  const yr=m.slice(0,4),months12=Array.from({length:12},(_,i)=>({m:yr+'-'+String(i+1).padStart(2,'0'),mat:0,inv:0,ong:0,po:0}));
-  S.pos.filter(p=>done(p)&&String(p.tanggal||'').slice(0,4)===yr&&(!ck||clientKey(p)===ck)).forEach(p=>{const r=months12[+String(p.tanggal).slice(5,7)-1];if(!r)return;const c=calc(p);r.po++;r.ong+=c.ongkir;r[p.jenis==='Inventaris'?'inv':'mat']+=c.total});
-  return {m,clients,shown,ck,cname,T,yr,months12,ongList,cmap};
+  // Total per bulan sepanjang tahun yang dipilih (ikut filter klien), dipisah per jenis transaksi.
+  const yr=m.slice(0,4),months12=Array.from({length:12},(_,i)=>({m:yr+'-'+String(i+1).padStart(2,'0'),by:{},ong:0,po:0,total:0}));
+  S.pos.filter(p=>done(p)&&String(p.tanggal||'').slice(0,4)===yr&&(!ck||clientKey(p)===ck)).forEach(p=>{const r=months12[+String(p.tanggal).slice(5,7)-1];if(!r)return;const c=calc(p),jn=jenisOf(p);r.po++;r.ong+=c.ongkir;r.total+=c.total;r.by[jn]=(r.by[jn]||0)+c.total});
+  // Jenis yang muncul di bulan ini / tahun ini; Material selalu ditampilkan bila tidak ada data.
+  const jMonth=JENIS.filter(j=>T.by[j]),jYear=JENIS.filter(j=>T.by[j]||months12.some(r=>r.by[j]));
+  return {m,clients,shown,ck,cname,T,yr,months12,ongList,cmap,jMonth:jMonth.length?jMonth:['Material'],jYear:jYear.length?jYear:['Material']};
 }
 const blnLabel=m=>BULAN[+m.slice(5,7)-1]+' '+m.slice(0,4);
 function vRekap(){
-  const {m,clients,shown,ck,cname,T,ongList,cmap}=rekap();
+  const {m,clients,shown,ck,cname,T,ongList,cmap,jMonth}=rekap();
   const months=[...new Set(S.pos.map(p=>String(p.tanggal||'').slice(0,7)).filter(x=>/^\d{4}-\d{2}$/.test(x)).concat(today().slice(0,7),m))].sort().reverse();
-  const tile=(c,ic,l,v)=>'<div class="card tile"><div class="ticon '+c+'">'+ic+'</div><div><small>'+l+'</small><strong style="font-size:20px">'+rp(v)+'</strong></div></div>';
+  const TI=['t1','t3','t2','t4'],tile=(c,ic,l,v)=>'<div class="card tile"><div class="ticon '+c+'">'+ic+'</div><div><small>'+l+'</small><strong style="font-size:20px">'+rp(v)+'</strong></div></div>';
   const sub=t=>'<br><span style="font-size:11.5px;color:var(--ink2)">'+t+'</span>';
-  const pill=j=>'<span class="st '+(j==='Inventaris'?'diajukan':'disetujui')+'" style="font-size:11px;padding:3px 9px">'+j+'</span>';
+  const pill=j=>'<span class="st" style="font-size:11px;padding:3px 9px;background:'+JCOLOR[j][0]+';color:'+JCOLOR[j][1]+'">'+esc(j)+'</span>';
   const card=c=>'<div class="card"><div class="chead" style="align-items:flex-start"><div><h2 style="font-size:17px;font-weight:600">'+esc(c.name)+'</h2>'+
-    '<div style="font-size:12px;color:var(--ink2);margin-top:3px">'+c.po+' PO · '+c.item+' barang'+(c.mat?' · Material '+rp(c.mat):'')+(c.inv?' · Inventaris '+rp(c.inv):'')+'</div></div>'+
+    '<div style="font-size:12px;color:var(--ink2);margin-top:3px">'+c.po+' PO · '+c.item+' item'+JENIS.filter(j=>c.by[j]).map(j=>' · '+esc(j)+' '+rp(c.by[j])).join('')+'</div></div>'+
     '<b style="font-weight:600;font-size:16px">'+rp(c.total)+'</b></div>'+
-    '<div class="tw"><table><thead><tr><th>Tgl</th><th>No. PO</th><th>Barang</th><th>Jenis</th><th class="num">Qty</th><th class="num">Harga</th><th class="num">Jumlah</th></tr></thead><tbody>'+
-    ['Material','Inventaris'].filter(jn=>c.j[jn].rows.length).map(jn=>{const q=c.j[jn];
-      return '<tr><td colspan="7" style="background:'+(jn==='Inventaris'?'rgba(232,162,58,.14)':'rgba(15,138,140,.08)')+';font-weight:600;padding:9px 10px">'+jn+' <span style="font-weight:400;color:var(--ink2);font-size:12px">· '+q.rows.length+' barang</span></td></tr>'+
+    '<div class="tw"><table><thead><tr><th>Tgl</th><th>No. PO</th><th>Uraian</th><th>Jenis</th><th class="num">Qty</th><th class="num">Harga</th><th class="num">Jumlah</th></tr></thead><tbody>'+
+    JENIS.filter(jn=>c.j[jn]).map(jn=>{const q=c.j[jn];
+      return '<tr><td colspan="7" style="background:'+JCOLOR[jn][0]+';font-weight:600;padding:9px 10px">'+esc(jn)+' <span style="font-weight:400;color:var(--ink2);font-size:12px">· '+q.rows.length+' item</span></td></tr>'+
       q.rows.map(r=>'<tr><td style="white-space:nowrap">'+esc(String(r.p.tanggal||'').slice(8,10)+'/'+String(r.p.tanggal||'').slice(5,7))+'</td><td><button class="pono" data-act="view" data-id="'+esc(r.p.id)+'">'+esc(r.p.no)+'</button></td><td>'+esc(r.i.nama)+sub(esc(r.p.supplier))+'</td><td>'+pill(r.jenis)+'</td><td class="num">'+qtyf(r.i.qty)+' '+esc(r.i.satuan)+'</td><td class="num">'+rp(r.i.harga)+'</td><td class="num">'+rp(r.i.jumlah)+'</td></tr>').join('')+
       (q.ppn?'<tr><td colspan="6" class="num">PPN</td><td class="num">'+rp(q.ppn)+'</td></tr>':'')+
       (q.ong?'<tr><td colspan="6" class="num">Ongkos kirim</td><td class="num">'+rp(q.ong)+'</td></tr>':'')+
-      '<tr><td colspan="6" class="num">Subtotal '+jn+'</td><td class="num"><b>'+rp(q.total)+'</b></td></tr>'}).join('')+
+      '<tr><td colspan="6" class="num">Subtotal '+esc(jn)+'</td><td class="num"><b>'+rp(q.total)+'</b></td></tr>'}).join('')+
     '<tr><td colspan="6" class="num"><b>Total '+esc(c.name)+'</b></td><td class="num"><b>'+rp(c.total)+'</b></td></tr></tbody></table></div></div>';
   const per=!ck&&clients.length>1?'<div class="card"><div class="chead"><h2>Ringkasan per klien · '+esc(blnLabel(m))+'</h2></div>'+
-    '<div class="tw"><table><thead><tr><th>Klien / project</th><th class="num">PO</th><th class="num">Material</th><th class="num">Inventaris</th><th class="num">Ongkir</th><th class="num">Total</th></tr></thead><tbody>'+
-    clients.map(c=>'<tr><td><button class="pono" data-act="rkc" data-k="'+esc(c.key)+'">'+esc(c.name)+'</button>'+sub(c.item+' barang')+'</td><td class="num">'+c.po+'</td><td class="num">'+(c.mat?rp(c.mat):'-')+'</td><td class="num">'+(c.inv?rp(c.inv):'-')+'</td><td class="num">'+(c.ong?rp(c.ong):'-')+'</td><td class="num"><b>'+rp(c.total)+'</b></td></tr>').join('')+
-    '</tbody></table></div><div style="font-size:12px;color:var(--ink2);margin-top:10px">Klik nama klien untuk melihat rincian klien itu saja. Ongkir sudah termasuk di kolom Material dan Inventaris.</div></div>':'';
+    '<div class="tw"><table><thead><tr><th>Klien / project</th><th class="num">PO</th>'+jMonth.map(j=>'<th class="num">'+esc(j)+'</th>').join('')+'<th class="num">Ongkir</th><th class="num">Total</th></tr></thead><tbody>'+
+    clients.map(c=>'<tr><td><button class="pono" data-act="rkc" data-k="'+esc(c.key)+'">'+esc(c.name)+'</button>'+sub(c.item+' item')+'</td><td class="num">'+c.po+'</td>'+jMonth.map(j=>'<td class="num">'+(c.by[j]?rp(c.by[j]):'-')+'</td>').join('')+'<td class="num">'+(c.ong?rp(c.ong):'-')+'</td><td class="num"><b>'+rp(c.total)+'</b></td></tr>').join('')+
+    '</tbody></table></div><div style="font-size:12px;color:var(--ink2);margin-top:10px">Klik nama klien untuk melihat rincian klien itu saja. Ongkir sudah termasuk di kolom jenis transaksinya.</div></div>':'';
   // Rekap ongkos kirim bulan ini: per PO, dikelompokkan per klien.
   const ong='<div class="card"><div class="chead"><h2>Ongkos kirim · '+esc(blnLabel(m))+(ck?' · '+esc(cname):'')+'</h2><b style="font-weight:600">'+rp(T.ong)+'</b></div>'+(ongList.length?
     '<div class="tw"><table><thead><tr><th>Klien</th><th>Tgl</th><th>No. PO</th><th>Supplier</th><th>Jenis</th><th class="num">Ongkos kirim</th></tr></thead><tbody>'+
     ongList.map((p,n)=>{const k=clientKey(p),first=!n||clientKey(ongList[n-1])!==k;
-      return '<tr><td>'+(first?'<b style="font-weight:600">'+esc(cmap[k].name)+'</b>':'')+'</td><td style="white-space:nowrap">'+esc(String(p.tanggal||'').slice(8,10)+'/'+String(p.tanggal||'').slice(5,7))+'</td><td><button class="pono" data-act="view" data-id="'+esc(p.id)+'">'+esc(p.no)+'</button></td><td>'+esc(p.supplier)+'</td><td>'+pill(p.jenis==='Inventaris'?'Inventaris':'Material')+'</td><td class="num">'+rp(calc(p).ongkir)+'</td></tr>'}).join('')+
+      return '<tr><td>'+(first?'<b style="font-weight:600">'+esc(cmap[k].name)+'</b>':'')+'</td><td style="white-space:nowrap">'+esc(String(p.tanggal||'').slice(8,10)+'/'+String(p.tanggal||'').slice(5,7))+'</td><td><button class="pono" data-act="view" data-id="'+esc(p.id)+'">'+esc(p.no)+'</button></td><td>'+esc(p.supplier)+'</td><td>'+pill(jenisOf(p))+'</td><td class="num">'+rp(calc(p).ongkir)+'</td></tr>'}).join('')+
     '<tr><td colspan="5" class="num"><b>Total ongkos kirim</b></td><td class="num"><b>'+rp(T.ong)+'</b></td></tr></tbody></table></div>'
     :'<div class="empty">Tidak ada ongkos kirim pada '+esc(blnLabel(m))+(ck?' untuk '+esc(cname):'')+'.</div>')+'</div>';
   return '<div class="col"><div class="card"><div class="chead" style="margin:0"><div class="filters"><select id="rm">'+months.map(x=>'<option value="'+x+'"'+(x===m?' selected':'')+'>'+blnLabel(x)+'</option>').join('')+'</select>'+
     '<select id="rk"><option value="">Semua klien</option>'+clients.map(c=>'<option value="'+esc(c.key)+'"'+(c.key===ck?' selected':'')+'>'+esc(c.name)+'</option>').join('')+'</select>'+
     (ck?'<button class="btn" data-act="rkall">Semua klien</button>':'')+'</div><button class="btn" data-act="csv">'+IC.dl+'Unduh rekap (Excel)</button></div>'+
-    '<div style="font-size:12px;color:var(--ink2);margin-top:10px">Berisi PO yang sudah disetujui penuh pada bulan yang dipilih, dirinci per klien (kolom Project). Jumlah sudah dipotong diskon; total klien sudah termasuk PPN dan ongkos kirim.</div></div>'+
-    '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:20px">'+tile('t1',IC.box,'Material',T.mat)+tile('t3',IC.rekap,'Inventaris',T.inv)+tile('t2',IC.clock,'Ongkos kirim',T.ong)+tile('t4',IC.coin,ck?'Total '+esc(cname):'Total bulan ini',T.mat+T.inv)+'</div>'+
-    per+ong+(shown.length?shown.map(card).join(''):'<div class="card empty">Belum ada pembelian yang disetujui pada '+esc(blnLabel(m))+'.</div>')+'</div>';
+    '<div style="font-size:12px;color:var(--ink2);margin-top:10px">Berisi PO yang sudah disetujui penuh pada bulan yang dipilih, dirinci per klien (kolom Project) dan per jenis transaksi. Jumlah sudah dipotong diskon; total sudah termasuk PPN dan ongkos kirim.</div></div>'+
+    '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:20px">'+jMonth.map((j,i)=>tile(TI[i%2===0?0:1],i%2===0?IC.box:IC.rekap,esc(j),T.by[j]||0)).join('')+tile('t2',IC.clock,'Ongkos kirim',T.ong)+tile('t4',IC.coin,ck?'Total '+esc(cname):'Total bulan ini',T.total)+'</div>'+
+    per+ong+(shown.length?shown.map(card).join(''):'<div class="card empty">Belum ada transaksi yang disetujui pada '+esc(blnLabel(m))+'.</div>')+'</div>';
 }
 function loadExcel(){return window.ExcelJS?Promise.resolve():new Promise((ok,no)=>{const s=document.createElement('script');s.src='https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.4.0/exceljs.min.js';s.onload=()=>ok();s.onerror=()=>no(new Error('exceljs'));document.head.appendChild(s)})}
 async function rekapXLSX(){
   await loadExcel();
-  const {m,clients,shown,ck,cname,T,yr,months12,ongList,cmap}=rekap(),bl=blnLabel(m),wb=new ExcelJS.Workbook();wb.creator='Dashboard PO Naintiland';
+  const {m,clients,shown,ck,cname,T,yr,months12,ongList,cmap,jMonth,jYear}=rekap(),bl=blnLabel(m),wb=new ExcelJS.Workbook();wb.creator='Dashboard PO Naintiland';
   const thin={style:'thin',color:{argb:'FFBFBFBF'}},box={top:thin,left:thin,bottom:thin,right:thin},fill=c=>({type:'pattern',pattern:'solid',fgColor:{argb:c}}),NF='#,##0;-#,##0;"-"',
-    H=['No','Tanggal','No. PO','Supplier','Nama Barang','Qty','Satuan','Harga Satuan (Rp)','Diskon (Rp)','Jumlah (Rp)'],AL=['center','center','left','left','left','center','center','right','right','right'],NC=H.length,L='J';
-  const sheet=(name,orient,widths)=>{const w=wb.addWorksheet(name,{views:[{showGridLines:false}],pageSetup:{orientation:orient,paperSize:9,fitToPage:true,fitToWidth:1,fitToHeight:0,margins:{left:.4,right:.4,top:.5,bottom:.5,header:.2,footer:.2}}});w.columns=widths.map(x=>({width:x}));return w};
+    H=['No','Tanggal','No. PO','Supplier','Uraian','Qty','Satuan','Harga Satuan (Rp)','Diskon (Rp)','Jumlah (Rp)'],AL=['center','center','left','left','left','center','center','right','right','right'],NC=H.length,L='J';
+  const COL=n=>String.fromCharCode(64+n);
+  const sheet=(name,orient,widths)=>{const w=wb.addWorksheet(name.slice(0,31),{views:[{showGridLines:false}],pageSetup:{orientation:orient,paperSize:9,fitToPage:true,fitToWidth:1,fitToHeight:0,margins:{left:.4,right:.4,top:.5,bottom:.5,header:.2,footer:.2}}});w.columns=widths.map(x=>({width:x}));return w};
   const band=(w,r,n,text,st)=>{w.mergeCells(r,1,r,n);const c=w.getCell(r,1);c.value=text;Object.assign(c,st);return c};
-  const head=(w,r,labels)=>{labels.forEach((h,i)=>{const c=w.getCell(r,i+1);c.value=h;c.font={bold:true,color:{argb:'FFFFFFFF'},size:10};c.fill=fill('FF4A442A');c.alignment={horizontal:'center',vertical:'middle',wrapText:true};c.border=box});w.getRow(r).height=22};
+  const head=(w,r,labels)=>{labels.forEach((h,i)=>{const c=w.getCell(r,i+1);c.value=h;c.font={bold:true,color:{argb:'FFFFFFFF'},size:10};c.fill=fill('FF4A442A');c.alignment={horizontal:'center',vertical:'middle',wrapText:true};c.border=box});w.getRow(r).height=24};
   const title=(w,n,t2)=>{band(w,1,n,'NAINTILAND',{font:{bold:true,size:14,color:{argb:'FF1F3864'}}});w.getRow(1).height=22;
     band(w,2,n,t2,{font:{bold:true,size:12}});
     band(w,3,n,'Berisi PO yang sudah disetujui penuh, berdasarkan tanggal PO. Jumlah sudah dipotong diskon; total termasuk PPN dan ongkos kirim.',{font:{italic:true,size:9,color:{argb:'FF7F7F7F'}}});return 5};
   const tag=ck?'  ·  '+cname.toUpperCase():'';
-  // Lembar Material dan Inventaris: rincian barang per klien, masing-masing dengan total sendiri.
-  const jTot={};
-  ['Material','Inventaris'].forEach(jn=>{
-    const ws=sheet(jn,'landscape',[5,12,17,22,36,8,9,16,14,18]);let r=title(ws,NC,'REKAP PEMBELIAN '+jn.toUpperCase()+' PER KLIEN — '+bl.toUpperCase()+tag);
-    const list=shown.filter(c=>c.j[jn].rows.length),totals=[];
-    if(!list.length){band(ws,r,NC,'Tidak ada pembelian '+jn.toLowerCase()+' yang disetujui pada '+bl+'.',{font:{italic:true,size:10,color:{argb:'FF7F7F7F'}}});r+=2}
+  // Satu lembar per jenis transaksi yang ada bulan ini: rincian per klien, masing-masing dengan total sendiri.
+  jMonth.forEach(jn=>{
+    const ws=sheet(jn,'landscape',[5,12,17,22,36,8,9,16,14,18]);let r=title(ws,NC,'REKAP '+jn.toUpperCase()+' PER KLIEN — '+bl.toUpperCase()+tag);
+    const list=shown.filter(c=>c.j[jn]),totals=[];
+    if(!list.length){band(ws,r,NC,'Tidak ada transaksi '+jn.toLowerCase()+' yang disetujui pada '+bl+'.',{font:{italic:true,size:10,color:{argb:'FF7F7F7F'}}});r+=2}
     list.forEach(c=>{const q=c.j[jn];
-      band(ws,r,NC,'KLIEN: '+c.name.toUpperCase()+'  ·  '+q.po+' PO  ·  '+q.rows.length+' barang',{font:{bold:true,size:11,color:{argb:'FF0A6C72'}}});ws.getRow(r).height=20;r++;
+      band(ws,r,NC,'KLIEN: '+c.name.toUpperCase()+'  ·  '+q.po+' PO  ·  '+q.rows.length+' item',{font:{bold:true,size:11,color:{argb:'FF0A6C72'}}});ws.getRow(r).height=20;r++;
       head(ws,r,H);r++;const first=r;
       q.rows.forEach((x,n)=>{const d=String(x.p.tanggal||'').split('-'),dt=d.length===3?new Date(Date.UTC(+d[0],+d[1]-1,+d[2])):null;
         [n+1,dt,x.p.no,x.p.supplier,x.i.nama,num(x.i.qty),x.i.satuan||'',num(x.i.harga),num(x.i.diskon),x.i.jumlah].forEach((v,i)=>{const cl=ws.getCell(r,i+1);cl.value=v;cl.border=box;cl.font={size:10};cl.alignment={horizontal:AL[i],vertical:'middle',wrapText:i===3||i===4};if(i===1)cl.numFmt='dd/mm/yyyy';if(i>=7)cl.numFmt=NF;if(i===5)cl.numFmt='#,##0.###'});r++});
@@ -379,30 +385,32 @@ async function rekapXLSX(){
       band(ws,r,NC-1,'TOTAL '+jn.toUpperCase()+' — '+c.name.toUpperCase(),{font:{bold:true,size:10},alignment:{horizontal:'right',vertical:'middle'}});
       for(let i=1;i<=NC;i++){const cl=ws.getCell(r,i);cl.border=box;cl.fill=fill('FFC4BD97')}
       const t=ws.getCell(r,NC);t.value={formula:'SUM('+L+first+':'+L+(r-1)+')',result:q.total};t.numFmt=NF;t.font={bold:true,size:10};t.alignment={horizontal:'right',vertical:'middle'};ws.getRow(r).height=20;totals.push(L+r);r+=2});
-    const sum=list.reduce((a,c)=>a+c.j[jn].total,0);jTot[jn]=sum;
+    const sum=list.reduce((a,c)=>a+c.j[jn].total,0);
     band(ws,r,NC-1,'TOTAL '+jn.toUpperCase()+' '+bl.toUpperCase()+tag,{font:{bold:true,size:11,color:{argb:'FFFFFFFF'}},alignment:{horizontal:'right',vertical:'middle'}});
     for(let i=1;i<=NC;i++){const cl=ws.getCell(r,i);cl.fill=fill('FF4A442A');cl.border=box}
     const gt=ws.getCell(r,NC);gt.value=totals.length?{formula:totals.join('+'),result:sum}:0;gt.numFmt=NF;gt.font={bold:true,size:11,color:{argb:'FFFFFFFF'}};gt.alignment={horizontal:'right',vertical:'middle'};ws.getRow(r).height=22;r+=2;
     band(ws,r,NC,'Dibuat '+tglShort(Date.now())+' dari Dashboard Pengajuan PO.',{font:{italic:true,size:8,color:{argb:'FF7F7F7F'}}});
   });
-  // Lembar Ringkasan: per klien bulan ini, lalu total per bulan sepanjang tahun, dipisah Material, Inventaris, dan ongkos kirim.
-  const w2=sheet('Ringkasan','portrait',[5,32,7,17,17,15,19]);let q=title(w2,7,'RINGKASAN PEMBELIAN — '+bl.toUpperCase()+tag);
-  const HS=['Material (Rp)','Inventaris (Rp)','Ongkir (Rp)','Total (Rp)'];
+  // Lembar Ringkasan: per klien bulan ini, lalu total per bulan sepanjang tahun, dipisah per jenis transaksi dan ongkos kirim.
+  const cols=jYear,nc=3+cols.length+2,cO=COL(4+cols.length),cT=COL(5+cols.length),cJ0=COL(4),cJ1=COL(3+cols.length);
+  const w2=sheet('Ringkasan','landscape',[5,32,7].concat(cols.map(()=>16),[14,18]));let q=title(w2,nc,'RINGKASAN TRANSAKSI — '+bl.toUpperCase()+tag);
+  const HS=cols.map(j=>j+' (Rp)').concat(['Ongkir (Rp)','Total (Rp)']);
   const sumRow=(r0,r1,rr,label)=>{w2.mergeCells(rr,1,rr,3);Object.assign(w2.getCell(rr,1),{value:label,font:{bold:true,size:10},alignment:{horizontal:'right'}});
-    for(let i=1;i<=7;i++){const x=w2.getCell(rr,i);x.border=box;x.fill=fill('FFC4BD97')}
-    ['D','E','F','G'].forEach((col,j)=>{const x=w2.getCell(rr,4+j);x.value=r1>=r0?{formula:'SUM('+col+r0+':'+col+r1+')'}:0;x.numFmt=NF;x.font={bold:true,size:10};x.alignment={horizontal:'right'}})};
-  const row=(vals,hl)=>{vals.forEach((v,i)=>{const x=w2.getCell(q,i+1);x.value=v;x.border=box;x.font={size:10,bold:i===6||!!hl};x.alignment={horizontal:i===1?'left':i<3?'center':'right',vertical:'middle'};if(i>=3)x.numFmt=NF;if(hl)x.fill=fill('FFE8F4F3')});q++};
-  band(w2,q,7,'A. PER KLIEN — '+bl.toUpperCase(),{font:{bold:true,size:11,color:{argb:'FF0A6C72'}}});q++;
+    for(let i=1;i<=nc;i++){const x=w2.getCell(rr,i);x.border=box;x.fill=fill('FFC4BD97')}
+    for(let i=4;i<=nc;i++){const col=COL(i),x=w2.getCell(rr,i);x.value=r1>=r0?{formula:'SUM('+col+r0+':'+col+r1+')'}:0;x.numFmt=NF;x.font={bold:true,size:10};x.alignment={horizontal:'right'}}};
+  const row=(vals,hl)=>{vals.forEach((v,i)=>{const x=w2.getCell(q,i+1);x.value=v;x.border=box;x.font={size:10,bold:i===nc-1||!!hl};x.alignment={horizontal:i===1?'left':i<3?'center':'right',vertical:'middle'};if(i>=3)x.numFmt=NF;if(hl)x.fill=fill('FFE8F4F3')});q++};
+  const tot=()=>({formula:'SUM('+cJ0+q+':'+cJ1+q+')'});
+  band(w2,q,nc,'A. PER KLIEN — '+bl.toUpperCase(),{font:{bold:true,size:11,color:{argb:'FF0A6C72'}}});q++;
   head(w2,q,['No','Klien / Project','PO'].concat(HS));q++;
-  let f0=q;shown.forEach((c,n)=>row([n+1,c.name,c.po,c.mat,c.inv,c.ong,{formula:'D'+q+'+E'+q,result:c.mat+c.inv}]));
+  let f0=q;shown.forEach((c,n)=>row([n+1,c.name,c.po].concat(cols.map(j=>c.by[j]||0),[c.ong,Object.assign(tot(),{result:c.total})])));
   sumRow(f0,q-1,q,'TOTAL '+bl.toUpperCase());q+=1;
-  band(w2,q,7,'Ongkir sudah termasuk di kolom Material dan Inventaris; kolom Ongkir menunjukkan bagiannya. Total = Material + Inventaris.',{font:{italic:true,size:8,color:{argb:'FF7F7F7F'}}});q+=2;
-  band(w2,q,7,'B. TOTAL PER BULAN — TAHUN '+yr+(ck?' · '+cname.toUpperCase():''),{font:{bold:true,size:11,color:{argb:'FF0A6C72'}}});q++;
+  band(w2,q,nc,'Ongkir sudah termasuk di kolom jenis transaksinya; kolom Ongkir menunjukkan bagiannya. Total = jumlah semua kolom jenis transaksi.',{font:{italic:true,size:8,color:{argb:'FF7F7F7F'}}});q+=2;
+  band(w2,q,nc,'B. TOTAL PER BULAN — TAHUN '+yr+(ck?' · '+cname.toUpperCase():''),{font:{bold:true,size:11,color:{argb:'FF0A6C72'}}});q++;
   head(w2,q,['No','Bulan','PO'].concat(HS));q++;
-  f0=q;months12.forEach((x,n)=>row([n+1,blnLabel(x.m),x.po,x.mat,x.inv,x.ong,{formula:'D'+q+'+E'+q,result:x.mat+x.inv}],x.m===m));
+  f0=q;months12.forEach((x,n)=>row([n+1,blnLabel(x.m),x.po].concat(cols.map(j=>x.by[j]||0),[x.ong,Object.assign(tot(),{result:x.total})]),x.m===m));
   sumRow(f0,q-1,q,'TOTAL TAHUN '+yr);
   // Lembar Ongkos Kirim: setiap PO yang memakai ongkir bulan ini, dikelompokkan per klien.
-  const w3=sheet('Ongkos Kirim','portrait',[5,30,12,17,24,12,18]);let o=title(w3,7,'REKAP ONGKOS KIRIM — '+bl.toUpperCase()+tag);
+  const w3=sheet('Ongkos Kirim','portrait',[5,30,12,17,24,20,18]);let o=title(w3,7,'REKAP ONGKOS KIRIM — '+bl.toUpperCase()+tag);
   const ot=[];
   if(!ongList.length){band(w3,o,7,'Tidak ada ongkos kirim pada '+bl+'.',{font:{italic:true,size:10,color:{argb:'FF7F7F7F'}}});o+=2}
   else{head(w3,o,['No','Klien / Project','Tanggal','No. PO','Supplier','Jenis','Ongkir (Rp)']);o++;
@@ -412,7 +420,7 @@ async function rekapXLSX(){
       const x=w3.getCell(o,7);x.value={formula:'SUM(G'+g0+':G'+(o-1)+')',result:cmap[k0].ong};x.numFmt=NF;x.font={bold:true,size:10};x.alignment={horizontal:'right'};ot.push('G'+o);o++};
     ongList.forEach(p=>{const k=clientKey(p);if(k0!==null&&k!==k0){close();g0=o}k0=k;
       const d=String(p.tanggal||'').split('-'),dt=d.length===3?new Date(Date.UTC(+d[0],+d[1]-1,+d[2])):null;
-      [++n,cmap[k].name,dt,p.no,p.supplier,p.jenis==='Inventaris'?'Inventaris':'Material',calc(p).ongkir].forEach((v,i)=>{const x=w3.getCell(o,i+1);x.value=v;x.border=box;x.font={size:10};x.alignment={horizontal:i===0||i===2||i===5?'center':i===6?'right':'left',vertical:'middle'};if(i===2)x.numFmt='dd/mm/yyyy';if(i===6)x.numFmt=NF});o++});
+      [++n,cmap[k].name,dt,p.no,p.supplier,jenisOf(p),calc(p).ongkir].forEach((v,i)=>{const x=w3.getCell(o,i+1);x.value=v;x.border=box;x.font={size:10};x.alignment={horizontal:i===0||i===2||i===5?'center':i===6?'right':'left',vertical:'middle'};if(i===2)x.numFmt='dd/mm/yyyy';if(i===6)x.numFmt=NF});o++});
     close();o++}
   w3.mergeCells(o,1,o,6);Object.assign(w3.getCell(o,1),{value:'TOTAL ONGKOS KIRIM '+bl.toUpperCase()+tag,font:{bold:true,size:11,color:{argb:'FFFFFFFF'}},alignment:{horizontal:'right'}});
   for(let i=1;i<=7;i++){const x=w3.getCell(o,i);x.fill=fill('FF4A442A');x.border=box}
@@ -449,8 +457,8 @@ function setHTML(){
     W.jabatan.map((l,i) => '<div class="lv"><span>Tingkat '+(i+1)+'</span><input type="text" data-jb="'+i+'" value="'+esc(l.title)+'" maxlength="40" placeholder="Nama jabatan"><button class="x" data-act="jbdel" data-i="'+i+'" title="Hapus">×</button></div>').join('')+
     '<button class="btn sm" data-act="jbadd">+ Tambah jabatan</button>'+
     '<div class="note" style="margin-top:26px">Tiap baris adalah satu rentang nominal. Jabatan <b>Menyetujui</b> harus menekan Setujui secara berurutan sebelum PO bisa diunduh. Jabatan <b>Mengetahui</b> wajib menekan Mengetahui (kapan saja setelah PO diajukan); tanpa itu PO belum bisa diunduh. "Sampai (Rp)" adalah batas atas rentang; rentangnya mulai dari atas batas baris sebelumnya (lihat keterangan di bawah tiap angka). Kosongkan untuk rentang tanpa batas atas.</div>'+
-    table('rules', 'Aturan nominal — pembelian Material', '')+
-    table('rulesInv', 'Aturan nominal — pembelian Inventaris', 'Berlaku untuk PO dengan Jenis pembelian <b>Inventaris</b>. Untuk batas "X ke atas", baris sebelumnya diisi X dikurangi 1 (mis. 24999999 untuk "25 juta ke atas", 99999999 untuk "100 juta ke atas").')+
+    table('rules', 'Aturan nominal — Material & transaksi lainnya', 'Berlaku untuk semua jenis transaksi selain Inventaris: Material, Upah Tukang Borongan, Upah Buruh Harian, Biaya Fasum, dan Biaya Marketing.')+
+    table('rulesInv', 'Aturan nominal — pembelian Inventaris', 'Berlaku untuk PO dengan Jenis transaksi <b>Inventaris</b>. Untuk batas "X ke atas", baris sebelumnya diisi X dikurangi 1 (mis. 24999999 untuk "25 juta ke atas", 99999999 untuk "100 juta ke atas").')+
     '<div class="mfoot" style="justify-content:flex-end;margin-top:22px"><button class="btn p" data-act="setsave">Simpan pengaturan</button></div>';
 }
 function vSet(){
@@ -462,7 +470,7 @@ function vSet(){
 async function saveSettings(btn){
   if(W.jabatan.some(j => !j.title.trim())) return toast('Nama jabatan tidak boleh kosong.');
   const ids = W.jabatan.map(j => j.id), out = {};
-  for(const [key, label] of [['rules','Material'], ['rulesInv','Inventaris']]){
+  for(const [key, label] of [['rules','Material & lainnya'], ['rulesInv','Inventaris']]){
     const rs = W[key].map(r => { const m = {}; ids.forEach(id => m[id] = (r.modes||{})[id] || 'none'); return {max: r.max==null||r.max==='' ? null : num(r.max), modes: m}; })
       .sort((a,b) => (a.max==null?Infinity:a.max) - (b.max==null?Infinity:b.max));
     if(rs.some(r => !Object.values(r.modes).includes('approve'))) return toast('Aturan '+label+': setiap rentang perlu minimal satu jabatan yang Menyetujui.');
@@ -484,7 +492,7 @@ function confirmBox(title, text, label, danger, fn){
   $('#cfm').onclick = async () => { $('#cfm').disabled = true; await fn(); if($('#cfm')) $('#cfm').disabled = false; };
 }
 function itemRow(it, i){
-  return '<tr data-i="'+i+'"><td><input type="text" data-f="nama" value="'+esc(it.nama)+'" placeholder="Nama material"></td><td style="width:74px"><input class="n" type="number" min="0" step="any" data-f="qty" value="'+esc(it.qty)+'"></td><td style="width:76px"><input type="text" data-f="satuan" value="'+esc(it.satuan)+'" placeholder="lbr"></td><td style="width:124px"><input class="n" type="number" min="0" step="any" data-f="harga" value="'+esc(it.harga)+'"></td><td style="width:108px"><input class="n" type="number" min="0" step="any" data-f="diskon" value="'+esc(it.diskon)+'"></td><td style="width:118px" class="num" data-j></td><td style="width:130px"><input type="text" data-f="ket" value="'+esc(it.ket)+'"></td><td style="width:34px"><button class="x" data-act="rowdel" title="Hapus baris">×</button></td></tr>';
+  return '<tr data-i="'+i+'"><td><input type="text" data-f="nama" value="'+esc(it.nama)+'" placeholder="Uraian / nama barang"></td><td style="width:74px"><input class="n" type="number" min="0" step="any" data-f="qty" value="'+esc(it.qty)+'"></td><td style="width:76px"><input type="text" data-f="satuan" value="'+esc(it.satuan)+'" placeholder="lbr"></td><td style="width:124px"><input class="n" type="number" min="0" step="any" data-f="harga" value="'+esc(it.harga)+'"></td><td style="width:108px"><input class="n" type="number" min="0" step="any" data-f="diskon" value="'+esc(it.diskon)+'"></td><td style="width:118px" class="num" data-j></td><td style="width:130px"><input type="text" data-f="ket" value="'+esc(it.ket)+'"></td><td style="width:34px"><button class="x" data-act="rowdel" title="Hapus baris">×</button></td></tr>';
 }
 const blankItem = () => ({nama:'', qty:'', satuan:'', harga:'', diskon:'', ket:''});
 function openForm(po){
@@ -495,8 +503,8 @@ function openForm(po){
   modal('<h2>'+(po?'Edit':'Form')+' Pengajuan PO</h2><div class="sub">Diisi oleh '+esc(PURCH)+'. Simpan sebagai draft atau langsung ajukan untuk persetujuan.</div>'+
     (had ? '<div class="note warn">PO ini sudah punya persetujuan. Menyimpan perubahan akan mengulang proses persetujuan dari awal.</div>' : '')+
     '<div class="fg"><div><label>No. PO</label><input type="text" id="fNo" maxlength="30" value="'+esc(F.no)+'" title="Terisi otomatis, boleh diubah"></div><div><label>Tanggal</label><input type="date" id="fTgl" value="'+esc(F.tanggal)+'"></div><div><label>Prioritas</label><select id="fPri">'+['Normal','Urgent','Sangat Urgent'].map(p => '<option'+(F.prioritas===p?' selected':'')+'>'+p+'</option>').join('')+'</select></div>'+
-    '<div><label>Project</label><input type="text" id="fPro" value="'+esc(F.project)+'" placeholder="Nama project / klien"></div><div><label>Supplier</label><input type="text" id="fSup" value="'+esc(F.supplier)+'" placeholder="Nama supplier"></div><div><label>Vendor <span style="font-weight:400">(opsional)</span></label><input type="text" id="fVen" maxlength="60" list="venList" value="'+esc(F.vendor)+'" placeholder="Nama vendor"><datalist id="venList">'+[...new Set(S.pos.map(p=>String(p.vendor||'').trim()).filter(Boolean))].sort().map(v=>'<option value="'+esc(v)+'">').join('')+'</datalist></div><div><label>Jenis pembelian</label><select id="fJen"><option'+(F.jenis!=='Inventaris'?' selected':'')+'>Material</option><option'+(F.jenis==='Inventaris'?' selected':'')+'>Inventaris</option></select></div><div><label>Bank supplier</label><input type="text" id="fBank" maxlength="30" value="'+esc(F.bank)+'" placeholder="mis. BCA"></div><div><label>No. rekening supplier</label><input type="text" id="fRek" maxlength="40" inputmode="numeric" value="'+esc(F.rek)+'" placeholder="Tercetak di PO"></div><div><label>Atas nama</label><input type="text" id="fAn" maxlength="60" value="'+esc(F.an)+'" placeholder="Nama pemilik rekening"></div></div>'+
-    '<div class="tw"><table class="items" style="min-width:760px"><thead><tr><th>Nama material</th><th>Qty</th><th>Satuan</th><th>Harga satuan</th><th>Diskon (Rp)</th><th class="num">Jumlah</th><th>Keterangan</th><th></th></tr></thead><tbody id="fItems">'+F.items.map(itemRow).join('')+'</tbody></table></div>'+
+    '<div><label>Project</label><input type="text" id="fPro" value="'+esc(F.project)+'" placeholder="Nama project / klien"></div><div><label>Supplier</label><input type="text" id="fSup" value="'+esc(F.supplier)+'" placeholder="Nama supplier"></div><div><label>Vendor <span style="font-weight:400">(opsional)</span></label><input type="text" id="fVen" maxlength="60" list="venList" value="'+esc(F.vendor)+'" placeholder="Nama vendor"><datalist id="venList">'+[...new Set(S.pos.map(p=>String(p.vendor||'').trim()).filter(Boolean))].sort().map(v=>'<option value="'+esc(v)+'">').join('')+'</datalist></div><div><label>Jenis transaksi</label><select id="fJen">'+JENIS.map(j => '<option'+(jenisOf(F)===j?' selected':'')+'>'+j+'</option>').join('')+'</select></div><div><label>Bank supplier</label><input type="text" id="fBank" maxlength="30" value="'+esc(F.bank)+'" placeholder="mis. BCA"></div><div><label>No. rekening supplier</label><input type="text" id="fRek" maxlength="40" inputmode="numeric" value="'+esc(F.rek)+'" placeholder="Tercetak di PO"></div><div><label>Atas nama</label><input type="text" id="fAn" maxlength="60" value="'+esc(F.an)+'" placeholder="Nama pemilik rekening"></div></div>'+
+    '<div class="tw"><table class="items" style="min-width:760px"><thead><tr><th>Uraian / nama barang</th><th>Qty</th><th>Satuan</th><th>Harga satuan</th><th>Diskon (Rp)</th><th class="num">Jumlah</th><th>Keterangan</th><th></th></tr></thead><tbody id="fItems">'+F.items.map(itemRow).join('')+'</tbody></table></div>'+
     '<button class="btn sm" data-act="rowadd" style="margin-top:8px">+ Tambah baris</button>'+
     '<div class="tot"><div style="flex:1;min-width:240px"><label>Catatan</label><textarea id="fCat" rows="3">'+esc(F.catatan)+'</textarea><div class="flowhint" id="fFlow"></div></div><div class="sum"><div><span>Subtotal</span><b id="sSub"></b></div><div><span><input type="checkbox" id="fPpn"'+(num(F.ppnPct)?' checked':'')+' style="width:auto"> PPN 11%</span><b id="sPpn"></b></div><div style="align-items:center"><span>Ongkos kirim</span><input class="n" type="number" min="0" step="any" id="fOng" value="'+(num(F.ongkir)||'')+'" placeholder="0" style="width:150px;text-align:right;padding:6px 10px"></div><div class="g"><span>TOTAL</span><span id="sTot"></span></div></div></div>'+
     '<div class="mfoot"><button class="btn" data-act="close">Batal</button><button class="btn" data-act="save" data-s="draft">Simpan draft</button><button class="btn p" data-act="save" data-s="diajukan">Ajukan persetujuan</button></div>');
@@ -548,7 +556,7 @@ function openView(po){
   if(canKnow(po)) acts += '<button class="btn p" data-act="know" data-id="'+id+'">Mengetahui</button>';
   if(done(po)) acts += '<button class="btn p" data-act="pdf" data-id="'+id+'">'+IC.dl+'Unduh PO (PDF)</button>';
   modal('<div class="chead" style="margin:0"><h2>'+esc(po.no)+'</h2>'+stPill(po)+'</div>'+
-    '<div class="kv"><div><small>Tanggal</small><b>'+esc(tgl(po.tanggal))+'</b></div><div><small>Project</small><b>'+esc(po.project)+'</b></div><div><small>Supplier</small><b>'+esc(po.supplier)+'</b></div><div><small>Vendor</small><b>'+esc(po.vendor||'-')+'</b></div><div><small>Prioritas</small><b>'+esc(po.prioritas||'-')+'</b></div><div><small>Jenis</small><b>'+esc(po.jenis==='Inventaris'?'Inventaris':'Material')+'</b></div><div><small>Rekening supplier</small><b>'+esc(po.rek?[po.bank,po.rek].filter(Boolean).join(' ')+(po.an?' · a.n. '+po.an:''):'-')+'</b></div><div><small>Jumlah item</small><b>'+c.items.length+'</b></div></div>'+
+    '<div class="kv"><div><small>Tanggal</small><b>'+esc(tgl(po.tanggal))+'</b></div><div><small>Project</small><b>'+esc(po.project)+'</b></div><div><small>Supplier</small><b>'+esc(po.supplier)+'</b></div><div><small>Vendor</small><b>'+esc(po.vendor||'-')+'</b></div><div><small>Prioritas</small><b>'+esc(po.prioritas||'-')+'</b></div><div><small>Jenis transaksi</small><b>'+esc(jenisOf(po))+'</b></div><div><small>Rekening supplier</small><b>'+esc(po.rek?[po.bank,po.rek].filter(Boolean).join(' ')+(po.an?' · a.n. '+po.an:''):'-')+'</b></div><div><small>Jumlah item</small><b>'+c.items.length+'</b></div></div>'+
     (po.rejected ? '<div class="note warn"><b>Alasan penolakan:</b> '+esc(po.rejected.reason||'-')+'</div>' : '')+
     '<div class="tw"><table><thead><tr><th>No</th><th>Nama material</th><th class="num">Qty</th><th>Satuan</th><th class="num">Harga satuan</th><th class="num">Diskon</th><th class="num">Jumlah</th><th>Keterangan</th></tr></thead><tbody>'+
     c.items.map((i,n) => '<tr><td>'+(n+1)+'</td><td>'+esc(i.nama)+'</td><td class="num">'+qtyf(i.qty)+'</td><td>'+esc(i.satuan)+'</td><td class="num">'+rp(i.harga)+'</td><td class="num">'+(num(i.diskon)?rp(i.diskon):'-')+'</td><td class="num">'+rp(i.jumlah)+'</td><td>'+esc(i.ket)+'</td></tr>').join('')+'</tbody></table></div>'+
@@ -661,10 +669,10 @@ function buildPDF(po){
   cap('Supplier',L+5,cy+6.5);font('bold',10.5,INK);doc.text(fit(po.supplier,po.vendor?36:cw2-10),L+5,cy+12.5);
   if(po.vendor){cap('Vendor',L+45,cy+6.5);font('bold',10.5,INK);doc.text(fit(po.vendor,cw2-50),L+45,cy+12.5)}
   if(po.rek){cap('Rekening pembayaran',L+5,cy+18);font('normal',8.5,INK);doc.text(fit([po.bank,po.rek].filter(Boolean).join('  ')+(po.an?'  ·  a.n. '+po.an:''),cw2-10),L+5,cy+22.8)}
-  [['Project',po.project,0,0],['Prioritas',po.prioritas||'-',1,0],['Jenis',po.jenis==='Inventaris'?'Inventaris':'Material',0,1],['Jumlah item',String(c.items.length),1,1]].forEach(k=>{
+  [['Project',po.project,0,0],['Prioritas',po.prioritas||'-',1,0],['Jenis transaksi',jenisOf(po),0,1],['Jumlah item',String(c.items.length),1,1]].forEach(k=>{
     const x=rx+5+k[2]*42,y=cy+6.5+k[3]*11.5;cap(k[0],x,y);font('bold',9,INK);doc.text(fit(k[1],k[2]?30:38),x,y+5)});
   /* tabel */
-  const Wc=[8,56,15,15,27,28,21],H=['No','Nama Material','Qty','Satuan','Harga Satuan','Jumlah','Keterangan'],X=[L];Wc.forEach(w=>X.push(X[X.length-1]+w));
+  const Wc=[8,56,15,15,27,28,21],H=['No',(jenisOf(po)==='Material'||jenisOf(po)==='Inventaris')?'Nama Barang':'Uraian','Qty','Satuan','Harga Satuan','Jumlah','Keterangan'],X=[L];Wc.forEach(w=>X.push(X[X.length-1]+w));
   const AL=['center','left','center','center','right','right','left'],tx=i=>AL[i]==='left'?X[i]+2:AL[i]==='right'?X[i+1]-2:X[i]+Wc[i]/2;
   const head=y=>{doc.setFillColor(INK[0],INK[1],INK[2]);doc.roundedRect(L,y,R-L,8,1.5,1.5,'F');font('bold',7.5,WHITE);H.forEach((h,i)=>doc.text(h,tx(i),y+5.2,{align:AL[i]}));return y+8};
   let y=head(88);

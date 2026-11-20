@@ -55,7 +55,7 @@ Bagikan alamatnya. Tiap orang mendaftar sendiri, lalu admin menetapkan jabatanny
   - Jabatan Menyetujui menekan **Setujui** secara berurutan sesuai urutan jabatan. Setelah yang terakhir menyetujui, PO berstatus Disetujui dan tombol **Unduh PO** muncul.
   - Jabatan Mengetahui wajib menekan **Mengetahui** (boleh sebelum atau sesudah penyetuju); sampai itu dilakukan, PO berstatus "Menunggu diketahui …" dan belum bisa diunduh. Kolom Mengetahui dilewati bila orangnya sama dengan penyetuju.
   - Bawaan: sampai Rp 5.000.000 disetujui Accounting; di atas itu sampai Rp 15.000.000 SPV Proyek; sampai Rp 25.000.000 Branch Manager; sampai Rp 99.000.000 General Manager; di atasnya Direktur. Tiap PO cukup disetujui satu jabatan yang berwenang. Ubah sesuai kebutuhan.
-- **Rekap Pembelian**: daftar barang dari PO yang sudah disetujui pada bulan yang dipilih, dipisah antara Material dan Inventaris (dipilih Project & Material Control di form lewat "Jenis pembelian"), lengkap dengan total dan unduhan Excel (.xlsx) yang sudah terformat.
+- **Rekap Pembelian**: daftar barang dari PO yang sudah disetujui pada bulan yang dipilih, dipisah antara Material dan Inventaris (dipilih Project & Material Control di form lewat "Jenis transaksi"), lengkap dengan total dan unduhan Excel (.xlsx) yang sudah terformat.
 - **Rekening supplier**: bank, nomor rekening, dan atas nama diisi Project & Material Control di form, tercetak otomatis di PDF PO, dan terisi sendiri saat supplier yang sama dipakai lagi.
 - **Vendor**: kolom opsional di form, terpisah dari Supplier, tercetak di PDF PO; nama yang pernah dipakai muncul sebagai saran.
 - **Ongkos kirim**: diisi di form di bawah PPN, ikut masuk ke TOTAL (dan karenanya ke rentang wewenang), tercetak di PDF dan rekap.
